@@ -1,0 +1,336 @@
+---
+title: "seawater_chem"
+author: "Samuel Gurr"
+date: "11/29/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+# NOTE (as of 1/28/2022): 9/28/2021 DIC data is reversed between 7.5 and 8 buckets - need to ping the team to fix 
+
+# LOAD PACKAGES
+library(dplyr)
+library(ggplot2)
+library(kableExtra)
+library(data.table)
+library(stringr)
+library(latex2exp)
+library(Rmisc)
+library(kableExtra)
+library(ggpubr)
+
+# SET WORKING DIRECTORY :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+setwd("C:/Users/samjg/Documents/Github_repositories/Airradians_OA-foodsupply/RAnalysis") # personal computer
+#  setwd("C:/Users/samuel.gurr/Documents/Github_repositories/Airradians_OA-foodsupply/RAnalysis") # Work computer
+
+
+# LOAD & FORMAT THE DATA 
+# All data  ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+chem    <- data.frame(read.csv(file="Data/Seawater_chemistry/Water_Chemistry_Scallops_2021.csv", header=T, sep = '\t')) %>%
+   dplyr::filter(!X  %in% c('Checking the system', 'RESPO', 'Tank Farm', 'Blue bucket check')) # %>%  # ommit all occurances of 'checks' of the system
+   # dplyr::rename(Date = ï..Date)
+chem$Date <- as.factor(gsub("/2021.*","", chem$Date))
+
+# FOOD  OA CHALLENGE ONLY  ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# foodxOAchem    <- data.frame(read.csv(file="Data/Seawater_chemistry/Water_Chemistry_FoodxOA_Challenge.csv", header=T))[,c(1:20)] %>%  
+#   dplyr::filter(!(Date %in% "10/12/2021" & Food.Treatment %in% 'Low')) %>% # omit 10/12/2021 measurements for the 'Low' Food treatment (check notebook, I think CO2 turned off overnight?) 
+#   dplyr::filter(!X %in% 'checking the system') %>%  # ommit all occurances of 'checks' of the system
+#   na.omit()
+CarbChemfoodxOAchem    <- data.frame(read.csv(file="Data/Seawater_chemistry/MasterTable_FoodxOA.csv", header=T)) %>% 
+                             dplyr::filter(!Date %in% '9/24/2021') # two measurements on 9/24 for static depuration buckets - omit for our analysis 
+
+```
+
+# ALL CHEMISTRY DATA  (Measured alues and CO2SYS calculations)
+
+## CO2SYS calculated values figures and tables
+```{r all CO2SYS calculated values - figures and tables, echo=FALSE}
+# measured values
+Measured_values <- CarbChemfoodxOAchem[,c(1:6,10,12:14)] %>% dplyr::mutate(Calculation = 'Measured_values')
+
+# CO@SYS calculations
+CO2SYS_TA.DIC   <- CarbChemfoodxOAchem %>% dplyr::select(c('Date', 'Fed_Unfed', 'pH', 'OA.pCO2.treat.', (contains("CO2SYS_TA.DIC")))) %>% dplyr::mutate(Calculation = 'TA.DIC')
+colnames(CO2SYS_TA.DIC)[5:19] <- sub(".*DIC_", "", colnames(CO2SYS_TA.DIC)[5:19]) # omit the column name with unique COSSYS string
+
+CO2SYS_TA.pH    <- CarbChemfoodxOAchem %>% dplyr::select(c('Date', 'Fed_Unfed', 'pH', 'OA.pCO2.treat.', (contains("CO2SYS_TA.pH"))))  %>% dplyr::mutate(Calculation = 'TA.pH')
+colnames(CO2SYS_TA.pH)[5:19] <- sub(".*_TA.pH_", "", colnames(CO2SYS_TA.pH)[5:19])# omit the column name with unique COSSYS string
+
+CO2SYS_DIC.pH   <- CarbChemfoodxOAchem %>% dplyr::select(c('Date', 'Fed_Unfed', 'pH', 'OA.pCO2.treat.', (contains("CO2SYS_DIC.pH")))) %>% dplyr::mutate(Calculation = 'DIC.pH')
+colnames(CO2SYS_DIC.pH)[5:19] <- sub(".*_DIC.pH_", "", colnames(CO2SYS_DIC.pH)[5:19])# omit the column name with unique COSSYS string
+
+
+
+CO2SYS_Master_CarbChem <- rbind(CO2SYS_TA.DIC, CO2SYS_TA.pH, CO2SYS_DIC.pH) # now you can merge based on column name 
+CO2SYS_Master_CarbChem <- CO2SYS_Master_CarbChem[!is.na(CO2SYS_Master_CarbChem$pH),] # omit rows where pH is 'NA'
+
+for(i in 5:(ncol(CO2SYS_Master_CarbChem)-1)){ # for loop for plotting all carbonate chemistry facetted by CO2SYS method...
+
+columnName <- colnames(CO2SYS_Master_CarbChem)[i] # for every column called in the for loop...
+pd <- position_dodge(0.1) # adjust the jitter for the different treatments   
+
+dat_fed <- CO2SYS_Master_CarbChem[!is.na(columnName),] %>%  # call the 'fed' group
+              dplyr::filter(!pH %in% 7) %>%  # omit pH 7
+              dplyr::filter(Fed_Unfed %in% 'fed') %>%  # call fed
+              summarySE(measurevar=columnName, groupvars=c("Date","pH", "Calculation")) # summarize by group variables
+P_fed <- ggplot(dat_fed, aes(x=Date, y=dat_fed[,5], colour=as.factor(pH), group=as.factor(pH))) + # plot
+            geom_errorbar(aes(ymin=dat_fed[,5]-se, ymax=dat_fed[,5]+se), colour="black", width=.1, position=pd) +
+            geom_line(position=pd) +
+            theme_classic() +
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+            labs(title=paste('HIGH food supply:', columnName, sep = ' '), y = columnName) +
+            geom_point(position=pd, size=3) +
+            facet_wrap(~Calculation)
+
+
+dat_unfed <- CO2SYS_Master_CarbChem[!is.na(columnName),] %>% # call the 'fed' group
+              dplyr::filter(!pH %in% 7) %>%  # omit pH 7
+              dplyr::filter(Fed_Unfed %in% 'unfed') %>% # call fed
+              summarySE(measurevar=columnName, groupvars=c("Date","pH", "Calculation"))# summarize by group variables
+P_unfed <- ggplot(dat_unfed, aes(x=Date, y=dat_unfed[,5], colour=as.factor(pH), group=as.factor(pH))) + # plot
+            geom_errorbar(aes(ymin=dat_unfed[,5]-se, ymax=dat_unfed[,5]+se), colour="black", width=.1, position=pd) +
+            geom_line(position=pd) +
+            theme_classic() +
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+            labs(title=paste('LOW food supply:', columnName, sep = ' '), y = columnName) +
+            geom_point(position=pd, size=3) +
+            facet_wrap(~Calculation)
+
+# print plots for fed and unfed
+pdf(paste0( paste("C:/Users/samjg/Documents/Github_repositories/Airradians_OA-foodsupply/RAnalysis/Output/Water_Chemistry/plots/", columnName, ".pdf", sep = '')), width = 8, height = 10 )
+print(ggarrange(P_fed, P_unfed, ncol = 1, nrow = 2))
+dev.off()
+
+}
+
+
+# Question: Should we report a mean of ALL data points or take a 'mean of means' within day and then across day
+# Answer/Rationale: Below I report the total mean of the experiment. Our downweller tank replicates are sources from the same column (rotated every 1-2 weeks!) but 
+# bubbled with stripped-air/CO2 and fed algae individually - thus these are biological replicates and their individual values within treatment should not be averaged within sampling day
+
+# Measured values (salinity, temperature, pH chosen scale) 
+MeasuredValuesTable <- (Measured_values[!is.na(Measured_values$pH),]) %>% # shrink the previous data set down to a single value - mean for the whole experiment challenge (N = number of days)
+    dplyr::filter(!pH %in% 7) %>% # omit pH 7 - not reported in this study
+    dplyr::select(-c('Date', 'OA.pCO2.treat.', 'Calculation')) %>%  # omit unnecessary factors and Si and P are 0 across the board...
+    dplyr::group_by(Fed_Unfed, pH) %>% 
+    dplyr::mutate(Fed_Unfed = case_when(Fed_Unfed == 'fed' ~ "High", Fed_Unfed == 'unfed' ~ "Low")) %>% 
+    dplyr::summarise_each(funs(mean(., na.rm = T),sd(., na.rm = T),se=sd(., na.rm = T)/sqrt(n())))
+MeasuredValuesTable_n <- as.data.frame((Measured_values[!is.na(Measured_values$pH),]) %>%  # get n (# of days)
+     dplyr::filter(!pH %in% 7) %>% # omit pH 7 - not reported in this study
+     dplyr::group_by(Fed_Unfed, pH) %>%
+     dplyr::mutate(Fed_Unfed = case_when(Fed_Unfed == 'fed' ~ "High", Fed_Unfed == 'unfed' ~ "Low")) %>% 
+     dplyr::summarise(n = n()))
+
+# loop of calculated CO2SYS values
+co2sys.loop <- as.data.frame(unique(CO2SYS_Master_CarbChem$Calculation))
+
+for (i in 1:nrow(co2sys.loop)) {
+
+x <- co2sys.loop[i,]
+
+# Summary table chemistry
+chemTable <- as.data.frame(CO2SYS_Master_CarbChem %>% # means for all values (by CO2SYS calculation) and within day (mean of replicate A B C D for each pHxfood treatment)
+    dplyr::select(-(Date)) %>% 
+    dplyr::filter(!pH %in% 7) %>% 
+    dplyr::filter(Calculation %in% x) %>% # call the co2sys row in the for loop
+    group_by(Fed_Unfed, pH) %>% # group by target variables
+    select(-c('OA.pCO2.treat.','Si_Alk_out_.mmol.kgSW.','P_Alk_out_.mmol.kgSW.', 'Calculation')) %>%  # omit unnecessary factors and Si and P are 0 across the board...
+    na.omit() %>% # omit NA occurances in the values (occasionally no TA alue for that day...)
+    summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))))
+
+chemTable_n <- as.data.frame(CO2SYS_Master_CarbChem %>%  # get n (# of days)
+     dplyr::filter(!pH %in% 7) %>%   
+     dplyr::filter(Calculation %in% x) %>% # call the co2sys row in the for loop
+     dplyr::group_by(Fed_Unfed, pH) %>%
+     dplyr::mutate(Fed_Unfed = case_when(Fed_Unfed == 'fed' ~ "High", Fed_Unfed == 'unfed' ~ "Low")) %>% 
+     dplyr::summarise(n = n()))
+
+ChemTable_MeanSE                 <- data.frame(matrix(nrow = 4, ncol = 1))
+ChemTable_MeanSE$pCO2_level      <- c('Elevated','Low','Elevated','Low')
+ChemTable_MeanSE$Food_supply     <- chemTable_n$Fed_Unfed 
+ChemTable_MeanSE$N               <- chemTable_n$n
+ChemTable_MeanSE$Salinity        <- paste(signif(MeasuredValuesTable$Salinity_mean,digits=3), signif(MeasuredValuesTable$Salinity_se,digits=3), sep="± ")  
+ChemTable_MeanSE$Temperature     <- paste(signif(MeasuredValuesTable$t.oC._of_bucket_mean,digits=3), signif(MeasuredValuesTable$t.oC._of_bucket_se,digits=3), sep="± ")   
+ChemTable_MeanSE$TA              <- paste(signif(MeasuredValuesTable$TA_.mmol.kgSW._mean,digits=3), signif(MeasuredValuesTable$TA_.mmol.kgSW._se,digits=3), sep="± ")    
+ChemTable_MeanSE$TCO2            <- paste(signif(MeasuredValuesTable$TCO2_.mmol.kgSW._mean,digits=3), signif(MeasuredValuesTable$TCO2_.mmol.kgSW._se,digits=3), sep="± ")   
+ChemTable_MeanSE$pH_Chosen.scale <- paste(signif(MeasuredValuesTable$pH_Chosen_scale_.4.decimals._mean,digits=3), signif(MeasuredValuesTable$pH_Chosen_scale_.4.decimals._se,digits=3), sep="± ")    
+ChemTable_MeanSE$CO2SYS_calc     <- x
+ChemTable_MeanSE$pH_out          <- paste(signif(chemTable$pH_out_mean,digits=3), signif(chemTable$pH_out_se,digits=3), sep="± ")
+ChemTable_MeanSE$fCO2_matm       <- paste(signif(chemTable$fCO2_out_.matm._mean,digits=3), signif(chemTable$fCO2_out_.matm._se,digits=3), sep="± ")
+ChemTable_MeanSE$pCO2_matm       <- paste(signif(chemTable$pCO2_out_.matm._mean,digits=3), signif(chemTable$pCO2_out_.matm._se,digits=3), sep="± ")
+ChemTable_MeanSE$HCO3_mmol.kgSW  <- paste(signif(chemTable$HCO3_out_.mmol.kgSW._mean,digits=3), signif(chemTable$HCO3_out_.mmol.kgSW._se,digits=3), sep="± ")
+ChemTable_MeanSE$CO3_mmol.kgSW   <- paste(signif(chemTable$CO3_out_.mmol.kgSW._mean,digits=3), signif(chemTable$CO3_out_.mmol.kgSW._se,digits=3), sep="± ")
+ChemTable_MeanSE$CO2_mmol.kgSW   <- paste(signif(chemTable$CO2_out_.mmol.kgSW._mean,digits=3), signif(chemTable$CO2_out_.mmol.kgSW._se,digits=3), sep="± ")
+ChemTable_MeanSE$B_Alk_mmol.kgSW <- paste(signif(chemTable$B_Alk_out_.mmol.kgSW._mean,digits=3), signif(chemTable$B_Alk_out_.mmol.kgSW._se,digits=3), sep="± ")
+ChemTable_MeanSE$OH_mmol.kgSW    <- paste(signif(chemTable$OH_out_.mmol.kgSW._mean,digits=3), signif(chemTable$OH_out_.mmol.kgSW._se,digits=3), sep="± ")
+ChemTable_MeanSE$Revelle         <- paste(signif(chemTable$Revelle_out_mean,digits=3), signif(chemTable$Revelle_out_se,digits=3), sep="± ")
+ChemTable_MeanSE$Calcite.Sat     <- paste(signif(chemTable$WCa_out_mean,digits=3), signif(chemTable$WCa_out_se,digits=3), sep="± ")
+ChemTable_MeanSE$Aragonite.Sat   <- paste(signif(chemTable$WAr_out_mean,digits=3), signif(chemTable$WAr_out_se,digits=3), sep="± ")
+ChemTable_MeanSE$xCO2_ppm        <- paste(signif(chemTable$xCO2_out_.ppm._mean,digits=3), signif(chemTable$xCO2_out_.ppm._se,digits=3), sep="± ")
+ChemTable_MeanSE                 <- ChemTable_MeanSE[,-1] # view table
+
+# write csv
+#write.csv(Resp.Master_OM, "C:/Users/samjg/Documents/Github_repositories/Airradians_OA/RAnalysis/Output/Respiration/Calculated_Resp_Master.csv")
+write.csv(ChemTable_MeanSE, paste("C:/Users/samjg/Documents/Github_repositories/Airradians_OA-foodsupply/RAnalysis/Output/Water_Chemistry/CO2SYS_", x, "_Master.csv", sep = ''))
+}
+
+
+```
+
+## Measured values figures and tables
+
+```{r all measured values - figures and tables, echo=FALSE}
+colnames(CarbChemfoodxOAchem)
+Meas_Calc_vals <- CarbChemfoodxOAchem[,c(1:6,10,12:14,45,56)] %>% 
+                    dplyr::mutate(Calculation = 'Measured_values')
+
+# Total Alkalinity (Mean St Error)
+TA_MeanSE <-  Meas_Calc_vals[!is.na(Meas_Calc_vals$TA_.mmol.kgSW.),] %>% 
+  dplyr::filter(!pH %in% 7) %>% 
+  summarySE(measurevar="TA_.mmol.kgSW.", groupvars=c("Date","pH", "Fed_Unfed")) %>% 
+  dplyr::mutate(Measurement = 'TA_mmol.kgSW') %>% 
+  dplyr::rename(value = TA_.mmol.kgSW.)
+# Total CO2 (Mean St Error)
+TACO2_MeanSE <-  Meas_Calc_vals[!is.na(Meas_Calc_vals$TCO2_.mmol.kgSW.),] %>% 
+  dplyr::filter(!pH %in% 7) %>% 
+  summarySE(measurevar="TCO2_.mmol.kgSW.", groupvars=c("Date","pH", "Fed_Unfed")) %>% 
+  dplyr::mutate(Measurement = 'TCO2_mmol.kgSW') %>% 
+  dplyr::rename(value = TCO2_.mmol.kgSW.)
+#  pH Chosen scale (Mean St Error)
+pChosenScale_MeanSE <-  Meas_Calc_vals[!is.na(Meas_Calc_vals$pH_Chosen_scale_.4.decimals.),] %>% 
+  dplyr::filter(!pH %in% 7) %>% 
+  summarySE(measurevar="pH_Chosen_scale_.4.decimals.", groupvars=c("Date","pH", "Fed_Unfed")) %>% 
+  dplyr::mutate(Measurement = 'pH_Chosen_scale') %>% 
+  dplyr::rename(value = pH_Chosen_scale_.4.decimals.)
+# Salinity (Mean St Error)
+Salinity_MeanSE <-  Meas_Calc_vals[!is.na(Meas_Calc_vals$Salinity),] %>% 
+  dplyr::filter(!pH %in% 7) %>% 
+  summarySE(measurevar="Salinity", groupvars=c("Date","pH", "Fed_Unfed")) %>% 
+  dplyr::mutate(Measurement = 'Salinity') %>% 
+  dplyr::rename(value = Salinity)
+# Temperature (Mean St Error)
+Temperature_MeanSE <-  Meas_Calc_vals[!is.na(Meas_Calc_vals$t.oC._of_bucket),] %>% 
+  dplyr::filter(!pH %in% 7) %>% 
+  summarySE(measurevar="t.oC._of_bucket", groupvars=c("Date","pH", "Fed_Unfed")) %>% 
+  dplyr::mutate(Measurement = 'Temperature') %>% 
+  dplyr::rename(value = t.oC._of_bucket)
+
+# Temperature (Mean St Error)
+pCO2_out_MeanSE <-  Meas_Calc_vals[!is.na(Meas_Calc_vals$CO2SYS_DIC.pH_pCO2_out_.matm.),] %>% 
+  dplyr::filter(!pH %in% 7) %>% 
+  summarySE(measurevar="CO2SYS_DIC.pH_pCO2_out_.matm.", groupvars=c("Date","pH", "Fed_Unfed")) %>% 
+  dplyr::mutate(Measurement = 'pCO2') %>% 
+  dplyr::rename(value = CO2SYS_DIC.pH_pCO2_out_.matm.)
+
+MeasuredVals_master <- rbind(TA_MeanSE, TACO2_MeanSE, pChosenScale_MeanSE, Salinity_MeanSE,Temperature_MeanSE,pCO2_out_MeanSE)
+
+pd <- position_dodge(0.1) # adjust the jitter for the different treatments   
+
+
+MeasuredVals_master$Date <- strptime(MeasuredVals_master$Date, format = "%m/%d/%Y")
+# MeasuredVals_master$Date <- as.Date(MeasuredVals_master$Date)
+Fed_measuredvals <- MeasuredVals_master %>% 
+  dplyr::filter(!pH %in% NA) %>% 
+  ggplot(aes(x=as.factor(Date), y=value, colour=as.factor(pH), group=as.factor(pH))) + 
+  geom_errorbar(aes(ymin=value-se, ymax=value+se), colour="black", width=.1, position=pd) +
+  geom_line(position=pd) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_point(position=pd, size=3) +
+  facet_wrap(~Measurement, scales = "free")
+Fed_measuredvals
+
+pdf("C:/Users/samjg/Documents/Github_repositories/Airradians_OA-foodsupply/RAnalysis/Output/Seawater_chemistry/CarbChem_MeanSE_Timeseries.pdf", width=12, height=8)
+print(Fed_measuredvals)
+graphics.off()
+```
+
+### Table (mean SE)
+```{r LArval period chemistry, echo=FALSE}
+names(chem)
+# Summary table chemistry
+
+
+chemTable_byDate <- as.data.frame(chem[,c(1,6:8,14:20)] %>% 
+    filter(Date %in%c("7/26", "7/28", "7/30", "8/19", "8/3", "8/5", "8/9", "9/1") ) %>% 
+    group_by(Date, OA_Treatment) %>%
+    summarise_each(funs(mean))) %>% 
+  na.omit() # a few missing TA measurments?
+# chemTable_n <- chem[,c(1,6:8,14:20)] %>% 
+#   group_by(Date, OA_Treatment) %>%
+#   dplyr::summarise(n = n())
+
+chemTable <- chemTable_byDate %>% 
+    dplyr::select(-'Date') %>% 
+    group_by(OA_Treatment) %>%
+    summarise_each(funs(mean,sd,se=sd(.)/sqrt(n())))
+chemTable_n <- chemTable_byDate %>% 
+     group_by(OA_Treatment) %>%
+     dplyr::summarise(n = n())
+
+ChemTable_MeanSE <- data.frame(matrix(nrow = 3, ncol = 1))
+ChemTable_MeanSE$pCO2_level   <-  c('Ambient','High','Mid')
+ChemTable_MeanSE$N <- c(22,12,22)
+ChemTable_MeanSE$Salinity <- paste(signif(chemTable$Salinity_mean,digits=3), signif(chemTable$Salinity_se,digits=3), sep="± ")
+ChemTable_MeanSE$Temperature <- paste(signif(chemTable$t.oC._spec_mean,digits=3), signif(chemTable$t.oC._spec_se,digits=3), sep=" ± ")
+ChemTable_MeanSE$pH <- paste(signif(chemTable$pH_out_MeasTemp_mean,digits=3), signif(chemTable$pH_out_MeasTemp_se,digits=3), sep=" ± ")
+ChemTable_MeanSE$pCO2 <- paste(signif(chemTable$pCO2_out_.matm._MeasTemp_mean,digits=3), signif(chemTable$pCO2_out_.matm._MeasTemp_se,digits=3), sep=" ± ")
+# ChemTable_MeanSE$DIC <- paste(chemTable$mean.DIC, chemTable$sem.DIC, sep=" Â± ")
+ChemTable_MeanSE$TA <- paste(signif(chemTable$TA_.mmol.kgSW._mean,digits=3), signif(chemTable$TA_.mmol.kgSW._se,digits=3), sep=" ± ")
+ChemTable_MeanSE$TCO2 <- paste(signif(chemTable$TCO2_.mmol.kgSW._mean,digits=3), signif(chemTable$TCO2_.mmol.kgSW._se,digits=3), sep=" ± ")
+ChemTable_MeanSE$Aragonite.Sat <- paste(signif(chemTable$War_out_MeasTemp_mean,digits=3), signif(chemTable$War_out_MeasTemp_se,digits=3), sep=" ± ")
+ChemTable_MeanSE$Calcite.Sat <- paste(signif(chemTable$Wca_out_MeasTemp_mean,digits=3), signif(chemTable$Wca_out_MeasTemp_se,digits=3), sep=" ± ")
+ChemTable_MeanSE <- ChemTable_MeanSE[,-1] # view table
+
+
+# write csv
+#write.csv(Resp.Master_OM, "C:/Users/samjg/Documents/Github_repositories/Airradians_OA/RAnalysis/Output/Respiration/Calculated_Resp_Master.csv")
+write.csv(ChemTable_MeanSE, "C:/Users/samjg/Documents/Github_repositories/Airradians_OA/RAnalysis/Output/Water_Chemistry/All_CarbChem_MeanSE.csv")
+
+
+# show in markdown file
+ ChemTable_MeanSE %>%  kbl(caption = "Seawater chemistry July 26, 2021 - Nov 23, 2021") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+# Food x OA Challenge (only!)
+
+### Table (mean SE)
+
+
+```{r food OA challenge chem table, echo=FALSE}
+# Summary table chemistry
+foodOA_table <- foodxOAchem[,c(3,4,6,11,13:14,16:20)] %>% 
+    group_by(pH,Food.Treatment) %>%
+    summarise_each(funs(mean,sd,se=sd(.)/sqrt(n())))
+foodOA_table_n <- foodxOAchem[,c(3,4,6,11,13:14,16:20)] %>% 
+  group_by(pH,Food.Treatment)  %>% 
+  dplyr::summarise(n = n())
+
+FoodXOA.Chem_MeanSE <- data.frame(matrix(nrow = 4, ncol = 1))
+FoodXOA.Chem_MeanSE$pCO2_level   <-  c('High','High','Low','Low')
+FoodXOA.Chem_MeanSE$Food_supply  <-  c('High','Low','High','Low')
+FoodXOA.Chem_MeanSE$pHXfood <- paste(foodOA_table$pH,foodOA_table$Food.Treatment, sep = '*')
+FoodXOA.Chem_MeanSE$N <- c(21,16,21,16)
+FoodXOA.Chem_MeanSE$Salinity <- paste(signif(foodOA_table$Salinity_mean,digits=3), signif(foodOA_table$Salinity_se,digits=3), sep="± ")
+FoodXOA.Chem_MeanSE$Temperature <- paste(signif(foodOA_table$t.oC..of.bucket_mean,digits=3), signif(foodOA_table$t.oC..of.bucket_se,digits=3), sep=" ± ")
+FoodXOA.Chem_MeanSE$DO <- paste(signif(foodOA_table$DO.mg.L_mean,digits=3), signif(foodOA_table$DO.mg.L_se,digits=3), sep=" ± ")
+FoodXOA.Chem_MeanSE$pH <- paste(signif(foodOA_table$pH.out_mean,digits=3), signif(foodOA_table$pH.out_se,digits=3), sep=" ± ")
+FoodXOA.Chem_MeanSE$pCO2 <- paste(signif(foodOA_table$pCO2.out..matm._mean,digits=3), signif(foodOA_table$pCO2.out..matm._se,digits=3), sep=" ± ")
+# FoodXOA.Chem_MeanSE$DIC <- paste(foodOA_table$mean.DIC, foodOA_table$sem.DIC, sep=" Â± ")
+FoodXOA.Chem_MeanSE$TA <- paste(signif(foodOA_table$TA..mmol.kgSW._mean,digits=3), signif(foodOA_table$TA..mmol.kgSW._se,digits=3), sep=" ± ")
+FoodXOA.Chem_MeanSE$Aragonite.Sat <- paste(signif(foodOA_table$WAr.out_mean,digits=3), signif(foodOA_table$WAr.out_se,digits=3), sep=" ± ")
+FoodXOA.Chem_MeanSE$Calcite.Sat <- paste(signif(foodOA_table$WCa.out_mean,digits=3), signif(foodOA_table$WCa.out_se,digits=3), sep=" ± ")
+FoodXOA.Chem_MeanSE <- FoodXOA.Chem_MeanSE[,-1] # view table
+
+
+# write csv
+#write.csv(Resp.Master_OM, "C:/Users/samjg/Documents/Github_repositories/Airradians_OA/RAnalysis/Output/Respiration/Calculated_Resp_Master.csv")
+write.csv(FoodXOA.Chem_MeanSE, "C:/Users/samjg/Documents/Github_repositories/Airradians_OA/RAnalysis/Output/Water_Chemistry/FoodxOAChallenge_CarbChem_MeanSE.csv")
+
+
+# show in markdown file
+ FoodXOA.Chem_MeanSE %>%  kbl(caption = "Seawater chemistry Food x OA Challenge (only)") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+ 
+```
